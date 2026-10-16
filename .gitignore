@@ -1,0 +1,8 @@
+*.log
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# ruff 的缓存
+.ruff_cache/
