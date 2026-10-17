@@ -7,6 +7,7 @@
 # 依赖: python3 + fontTools  ->  sudo pacman -S python-fonttools
 # 为什么必须改字体文件(而不是 fontconfig / 注入 CSS),见 README。
 # 不产生配置文件,不往用户目录放字体;pacman 覆盖后重跑本脚本即可。
+# 幂等:已打过的文件会被 check 跳过,所以 pacman hook(hooks/)可以在升级后直接调本脚本。
 # 判据(data/width2.tsv)变了要先重装字体包再重跑: cmap 删掉回不来(见 README 维护)。
 #
 #   bash scripts/patch-fonts.sh          # 全部, 并发 4
@@ -29,17 +30,24 @@ done
 [ -n "$PY" ] || { echo "!! 找不到装了 fontTools 的 python: sudo pacman -S python-fonttools" >&2; exit 1; }
 echo "== python: $PY"
 
+# pacman hook 里已经是 root 且没有 TTY,不能再走 sudo
+SUDO=sudo
+[ "$(id -u)" = 0 ] && SUDO=
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo
 echo "== [1/2] Noto Color Emoji =="
-if [ -f "$NOTO" ]; then
-    "$PY" "$ROOT/scripts/fontpatch.py" noto "$NOTO" "$TMP/NotoColorEmoji.ttf"
-    sudo cp -f "$TMP/NotoColorEmoji.ttf" "$NOTO"
-    echo "   -> 已写入 $NOTO"
+if [ ! -f "$NOTO" ]; then
+    echo "!! 找不到 $NOTO(未安装 noto-fonts-emoji ?)"
+elif "$PY" "$ROOT/scripts/fontpatch.py" check noto "$NOTO"; then
+    echo "   = 已打过字体补丁, 跳过"
 else
-    echo "!! 找不到 $NOTO(装了 noto-fonts-emoji 吗?)"
+    "$PY" "$ROOT/scripts/fontpatch.py" noto "$NOTO" "$TMP/NotoColorEmoji.ttf"
+    $SUDO cp -f "$TMP/NotoColorEmoji.ttf" "$NOTO"
+    echo "   -> 已写入 $NOTO"
+    : >"$TMP/noto.patched"
 fi
 
 echo
@@ -50,9 +58,14 @@ for f in /usr/share/fonts/TTF/Iosevka-*.ttc; do
     base="$(basename "$f")"
     while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do sleep 0.3; done # 限流
     (
+        if "$PY" "$ROOT/scripts/fontpatch.py" check iosevka "$f"; then
+            echo "   = $base 已打过字体补丁,跳过"
+            exit 0
+        fi
         if "$PY" "$ROOT/scripts/fontpatch.py" iosevka "$f" "$TMP/$base" >"$TMP/$base.log" 2>&1; then
-            sudo cp -f "$TMP/$base" "$f"
+            $SUDO cp -f "$TMP/$base" "$f"
             echo "   ✓ $base"
+            : >"$TMP/$base.patched"
         else
             # 直接打出日志:$TMP 在退出时就被删了,给出路径没用
             echo "   ✗ $base 失败:"
@@ -69,9 +82,14 @@ if ls "$TMP"/*.failed >/dev/null 2>&1; then
     exit 1
 fi
 
-echo
-echo "== 刷新字体缓存 =="
-sudo fc-cache -f >/dev/null
+if ls "$TMP"/*.patched >/dev/null 2>&1; then
+    echo
+    echo "== 刷新字体缓存 =="
+    $SUDO fc-cache -f >/dev/null
+else
+    echo
+    echo "== 都已打过字体补丁, 无需重打 =="
+fi
 echo
 echo "✅ 完成。自检:"
 echo "   fc-match -f '%{family[0]}\\n' 'Iosevka Term:charset=2705'   # 应为 Noto Color Emoji"

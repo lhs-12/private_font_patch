@@ -8,7 +8,10 @@
 Iosevka 的 cmap 里"oxfmt 算 2 格"的码点, 正好就是它自己画 1 格的那批。
 删掉后由谁接手、宽度对不对取决于装了哪些字体,见 README 的"还剩什么"。
 
+check   : 判断文件是否已打过补丁, 退出码 0 打过 / 1 没打(patch-fonts.sh 靠它跳过)。
+
 用法: python scripts/fontpatch.py noto|iosevka <输入> <输出>
+      python scripts/fontpatch.py check noto|iosevka <文件>
 被 patch-fonts.sh 调用。
 """
 
@@ -71,7 +74,25 @@ def patch_iosevka(inp, out):
     print(f"  共删除 {total} 个映射")
 
 
+def check_noto(inp):
+    """打过了 = 每个字形 advance 都是 1em。补丁不动 advance=0 的字形(.notdef 之类), 所以 0 也算打过。"""
+    font = TTFont(inp, lazy=True)
+    upem = font["head"].unitsPerEm
+    return all(a in (0, upem) for a, _ in font["hmtx"].metrics.values())
+
+
+def check_iosevka(inp):
+    """打过了 = 每个 face 的 cmap 都没有 width2 里的码点(逐 face 早退, 没打过时快)。"""
+    to_remove = load_widths()
+    collection = TTCollection(inp, lazy=True)
+    return all(not (set(font.getBestCmap()) & to_remove) for font in collection.fonts)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 4 or sys.argv[1] not in ("noto", "iosevka"):
-        sys.exit(f"用法: {sys.argv[0]} noto|iosevka <输入> <输出>")
-    (patch_noto if sys.argv[1] == "noto" else patch_iosevka)(*sys.argv[2:])
+    args = sys.argv[1:]
+    if len(args) == 3 and args[0] == "check" and args[1] in ("noto", "iosevka"):
+        sys.exit(0 if (check_noto if args[1] == "noto" else check_iosevka)(args[2]) else 1)
+    if len(args) == 3 and args[0] in ("noto", "iosevka"):
+        (patch_noto if args[0] == "noto" else patch_iosevka)(args[1], args[2])
+    else:
+        sys.exit(f"用法: {sys.argv[0]} noto|iosevka <输入> <输出> | check noto|iosevka <文件>")

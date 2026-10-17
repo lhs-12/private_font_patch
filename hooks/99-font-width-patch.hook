@@ -1,0 +1,14 @@
+# pacman hook: 字体包升级后自动打字体宽度补丁
+# 使用方式: sudo cp hooks/99-font-width-patch.hook /etc/pacman.d/hooks/
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = ttc-iosevka
+Target = noto-fonts-emoji
+
+[Action]
+Description = 执行字体宽度补丁...
+When = PostTransaction
+Exec = /home/hans/MyProjects/private_font_patch/scripts/patch-fonts.sh
