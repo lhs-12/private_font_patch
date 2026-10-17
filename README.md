@@ -3,6 +3,42 @@
 让 emoji 在所有软件里都显示成彩色, 占 2 格(宽度以 `oxfmt` 为准), 同时保持中英 2:1 和等宽.  
 做法是给两处系统字体文件和一个 VSCode 插件打补丁, 不加配置文件.
 
+# 使用命令
+
+```bash
+# 需要依赖: python3 和 python-fonttools
+sudo pacman -S --needed python python-fonttools
+
+# 装 pacman hook, 以后字体包升级自动打补丁. hook 里 Exec 是绝对路径, 需要和仓库地址一致
+sudo mkdir -p /etc/pacman.d/hooks
+sudo cp hooks/99-font-width-patch.hook /etc/pacman.d/hooks/
+
+# 安装字体补丁(幂等)
+sudo bash scripts/patch-fonts.sh
+
+# VSCode markdowntable 插件补丁(安装后要重载 VSCode 窗口)
+python scripts/patch_markdowntable.py
+
+# 撤销补丁
+sudo rm -f /etc/pacman.d/hooks/99-font-width-patch.hook
+sudo pacman -S ttc-iosevka noto-fonts-emoji && sudo fc-cache -f
+python scripts/patch_markdowntable.py --revert
+```
+
+# 维护
+
+| 上游变了                                | 怎么做                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `ttc-iosevka` / `noto-fonts-emoji` 升级 | 不用动: 装了 hook 就自动重打; 没装则 `sudo bash scripts/patch-fonts.sh`   |
+| oxc 换了 `unicode-width` 版本           | `python scripts/gen_width2.py` -> 重跑 `sudo bash scripts/patch-fonts.sh` |
+| markdowntable 升级                      | `python scripts/patch_markdowntable.py`, 然后重载窗口                     |
+| VSCode 升级                             | 不用动                                                                    |
+
+判据变大(表里多出码点)直接重跑补丁即可, check 会把新增的接着删掉;  
+变小(码点要回到 Iosevka)不行——Iosevka 那个补丁是删 cmap, 不可逆, 需要重装字体包再重打补丁.
+
+检查补丁效果看 `docs/验收.md`
+
 # 背景
 
 这个项目不装新字体, 只用机器上本来就有的这些(都是等宽链上会碰到的):
@@ -20,6 +56,19 @@ fontconfig 的 `monospace` 顺序: `~/.config/fontconfig/conf.d/50-generic.conf`
 
 VSCode 不走这条链, 走 `editor.fontFamily`: `Iosevka Term`, `MiSans`, `MiSans L3`, `Symbols Nerd Font Mono`, `Noto Color Emoji`(见 "还剩什么" 里的 "终端和编辑器是两条字体链").
 
+# 目录
+
+```
+scripts/patch-fonts.sh          ★ 打字体补丁(需要 sudo; 幂等, 已打过就跳过)
+scripts/fontpatch.py            └ 它调用的两个字体改写 + check 判据(Noto / Iosevka)
+scripts/gen_width2.py           └ 重新导出 data/width2.tsv(判据变了才需要跑)
+scripts/patch_markdowntable.py  ★ 给 markdowntable 追加 oxfmt 包装
+hooks/99-font-width-patch.hook  pacman hook: 字体包升级后自动重打
+data/width2.tsv                 oxfmt 判定为 2 格的码点
+data/iosevka-removed.txt        从 Iosevka 删掉的 290 个码点
+docs/验收.md                    肉眼验收: 表格竖线是否对齐
+```
+
 # 做了什么
 
 | 文件                                                                          | 改动                                                                       |
@@ -27,20 +76,6 @@ VSCode 不走这条链, 走 `editor.fontFamily`: `Iosevka Term`, `MiSans`, `MiSa
 | `/usr/share/fonts/noto/NotoColorEmoji.ttf`                                    | `hmtx` advance `2550 → 2048`(`1em` = 2 格); `CBLC` 位图 `ppem` `109 → 136` |
 | `/usr/share/fonts/TTF/Iosevka-*.ttc`                                          | 每个 face 的 cmap 删掉 290 个 "`oxfmt` 算 2 格" 的码点                     |
 | `~/.vscode/extensions/takumii.markdowntable-*/out/markdownTableDataHelper.js` | 末尾追加一段包装, 让表格格式化改走 `oxfmt`                                 |
-
-字体补丁需要 `python3` + `fontTools`: `sudo pacman -S python-fonttools`(脚本会自己找带 fontTools 的解释器).
-
-```bash
-# 字体补丁(可重复跑; 需要 sudo)
-bash scripts/patch-fonts.sh
-
-# markdowntable 补丁(改完重载 VSCode 窗口)
-python scripts/patch_markdowntable.py
-
-# 想撤销:
-sudo pacman -S ttc-iosevka noto-fonts-emoji && sudo fc-cache -f
-python scripts/patch_markdowntable.py --revert
-```
 
 那 290 个码点从 Iosevka 消失后换给别的字体, 落到哪、宽度对不对, 见 "还剩什么".  
 markdowntable 那段包装先按原逻辑排版, 再交给 `oxfmt` 重排; 它的命令(Tab 跳格, 增删行列, 对齐)都是对 `toFormatTableStr` 的属性访问, 所以全部会被接管.
@@ -104,25 +139,3 @@ fontconfig 改不了宽度: 它的属性里没有 advance 和 ppem, `matrix` 只
 VSCode 和 Chromium 也不看 fontconfig 的 charset: 遍历 CSS 字体列表时它们用字体自己的 cmap 判断有没有这个字, fontconfig 的 charset 只在整条列表都失败之后的系统兜底里用到.  
 所以往编辑器里注入 CSS 也不行: 只管得了那一个软件, 而且编辑器一升级就要重打一遍; 只有改字体文件能一次覆盖所有软件.
 
-# 目录
-
-```
-scripts/patch-fonts.sh          ★ 打字体补丁(需要 sudo)
-scripts/fontpatch.py            └ 它调用的两个字体改写(Noto / Iosevka)
-scripts/gen_width2.py           └ 重新导出 data/width2.tsv(判据变了才需要跑)
-scripts/patch_markdowntable.py  ★ 给 markdowntable 追加 oxfmt 包装
-data/width2.tsv                 oxfmt 判定为 2 格的码点
-data/iosevka-removed.txt        从 Iosevka 删掉的 290 个码点
-docs/验收.md                    肉眼验收: 表格竖线是否对齐
-```
-
-# 维护
-
-| 上游变了                                | 怎么做                                                                                      |
-| --------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `ttc-iosevka` / `noto-fonts-emoji` 升级 | `sudo bash scripts/patch-fonts.sh`(补丁被 pacman 覆盖掉)                                    |
-| oxc 换了 `unicode-width` 版本           | `python scripts/gen_width2.py` -> `sudo pacman -S ttc-iosevka noto-fonts-emoji` -> 重跑补丁 |
-| markdowntable 升级                      | `python scripts/patch_markdowntable.py`, 然后重载窗口                                       |
-| VSCode 升级                             | 不用动                                                                                      |
-
-判据变了必须**先重装字体包再重打**: Iosevka 那个补丁是删 cmap, 不可逆. 改完跑一眼 `docs/验收.md`.
