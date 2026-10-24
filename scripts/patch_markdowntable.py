@@ -13,6 +13,7 @@ mtdh.toFormatTableStr(...) 这种属性访问,所以覆盖这个属性就能接�
 """
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -29,7 +30,7 @@ SNIPPET = """
   exports.toFormatTableStr = function (tableData) {
     var md = original(tableData);
     try {
-      var r = cp.spawnSync(%(oxfmt)s, ['--stdin-filepath', 'table.md'], { input: md, encoding: 'utf8' });
+      var r = %(spawn)s;
       if (r.status === 0 && typeof r.stdout === 'string' && r.stdout.trim() !== '') {
         return r.stdout.replace(/[\\r\\n]+$/, '');
       }
@@ -40,12 +41,26 @@ SNIPPET = """
 """
 
 
+def spawn_call(oxfmt):
+    """JS 里怎么调 oxfmt。Windows 只有 .cmd shim 能用(Node 不肯跑 sh shim/裸 .cmd),只能过 shell;
+    windowsHide 防止从 VSCode 调时闪一个 cmd 黑窗。"""
+    if os.name == "nt":
+        cmdline = f'"{oxfmt}" --stdin-filepath table.md'
+        return f"cp.spawnSync({cmdline!r}, {{ input: md, encoding: 'utf8', shell: true, windowsHide: true }})"
+    return f"cp.spawnSync({oxfmt!r}, ['--stdin-filepath', 'table.md'], {{ input: md, encoding: 'utf8' }})"
+
+
 def find_oxfmt():
     """PATH 里没有就退回 mise 的安装目录(脚本可能跑在没有 shim 的环境里)。"""
     if path := shutil.which("oxfmt"):
         return path
-    installed = sorted((Path.home() / ".local/share/mise/installs/oxfmt").glob("*/node_modules/.bin/oxfmt"))
-    return str(installed[-1]) if installed else None
+    # PATHEXT 会认 .cmd, 但 glob 不会, 所以 fallback 里要写全名
+    name = "oxfmt.cmd" if os.name == "nt" else "oxfmt"
+    roots = [Path.home() / ".local/share/mise/installs/oxfmt"]
+    if local := os.environ.get("LOCALAPPDATA"):
+        roots.append(Path(local) / "mise/installs/oxfmt")
+    hits = [h for root in roots for h in sorted(root.glob(f"*/node_modules/.bin/{name}"))]
+    return str(hits[-1]) if hits else None
 
 
 def patch(helper, oxfmt, dry_run):
@@ -56,7 +71,7 @@ def patch(helper, oxfmt, dry_run):
         return "找不到 exports.toFormatTableStr,插件结构可能变了"
     if dry_run:
         return "会追加包装"
-    helper.write_text(src + SNIPPET % {"marker": MARKER, "oxfmt": repr(oxfmt)}, encoding="utf-8")
+    helper.write_text(src + SNIPPET % {"marker": MARKER, "spawn": spawn_call(oxfmt)}, encoding="utf-8", newline="\n")
     return "已追加包装"
 
 
@@ -64,7 +79,7 @@ def revert(helper):
     src = helper.read_text(encoding="utf-8")
     if MARKER not in src:
         return "没有本脚本的补丁"
-    helper.write_text(src[: src.index(MARKER)].removesuffix("\n"), encoding="utf-8")
+    helper.write_text(src[: src.index(MARKER)].removesuffix("\n"), encoding="utf-8", newline="\n")
     return "已还原"
 
 

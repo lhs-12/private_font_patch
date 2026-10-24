@@ -5,6 +5,8 @@
 
 # 使用命令
 
+Linux
+
 ```bash
 # 需要依赖: python3 和 python-fonttools
 sudo pacman -S --needed python python-fonttools
@@ -23,6 +25,18 @@ python scripts/patch_markdowntable.py
 sudo rm -f /etc/pacman.d/hooks/99-font-width-patch.hook
 sudo pacman -S ttc-iosevka noto-fonts-emoji && sudo fc-cache -f
 python scripts/patch_markdowntable.py --revert
+```
+
+Windows
+
+```bash
+# 1. MSYS2 环境字体修改依赖
+pacman -S mingw-w64-ucrt-x86_64-python-fonttools
+# 2. 检查并关掉会占用补丁字体的程序
+# 3. 执行 Windows 补丁脚本
+python scripts/patch-fonts-win.py
+# 4. VSCode markdowntable 插件补丁
+python scripts/patch_markdowntable.py
 ```
 
 # 维护
@@ -59,8 +73,9 @@ VSCode 不走这条链, 走 `editor.fontFamily`: `Iosevka Term`, `MiSans`, `MiSa
 # 目录
 
 ```
-scripts/patch-fonts.sh          ★ 打字体补丁(需要 sudo; 幂等, 已打过就跳过)
-scripts/fontpatch.py            └ 它调用的两个字体改写 + check 判据(Noto / Iosevka)
+scripts/patch-fonts.sh          ★ 打字体补丁(Linux, 需要 sudo; 幂等, 已打过就跳过)
+scripts/patch-fonts-win.py      ★ 打字体补丁(Windows, 单文件; 自动申请权限并写回)
+scripts/fontpatch.py            └ patch-fonts.sh 调用的两个字体改写 + check 判据(Noto / Iosevka)
 scripts/gen_width2.py           └ 重新导出 data/width2.tsv(判据变了才需要跑)
 scripts/patch_markdowntable.py  ★ 给 markdowntable 追加 oxfmt 包装
 hooks/99-font-width-patch.hook  pacman hook: 字体包升级后自动重打
